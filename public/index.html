@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="inkgraph-token" content="__SESSION_TOKEN__">
+  <meta name="theme-color" content="#173e35">
+  <title>墨脈 InkGraph · 本地研究工作台</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要內容</a>
+  <div id="app"><main class="loading">墨脈正在開啟本機資料庫…</main></div>
+  <dialog id="dialog" aria-label="編輯資料"></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <input id="upload" type="file" multiple accept=".pdf,.docx,.txt,.md,.html,.htm,.json,.csv,.png,.jpg,.jpeg,.webp" hidden>
+  <input id="restore" type="file" accept=".zip" hidden>
+</body>
+</html>
