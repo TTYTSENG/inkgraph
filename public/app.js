@@ -8,7 +8,7 @@ const icon = (name) => `<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" 
 const labels = {dashboard:'研究總覽',inbox:'待整理收件匣',sources:'來源文獻庫',annotations:'摘錄與加註',terms:'字彙辭典',notes:'隨記與寫作',matrix:'文獻比較表',graph:'文獻脈絡',references:'APA 引用清單',exports:'輸出與備份',settings:'設定與說明',source:'閱讀工作區',note:'寫作工作區',search:'搜尋結果'};
 const relationLabels = {supports:'支持',contradicts:'反駁',extends:'延伸',compares:'比較'};
 const origins = {local:'本機檔案',gemini:'Gemini',notebooklm:'NotebookLM',manual:'手動建立',demo:'示範資料'};
-let entities=[], view='dashboard', selectedId='', project='', query='', selectedQuote='', selectedPage='', readerMode='text', citations=null, aiAnswer='', aiKey='', aiModel='', noteDraft=null, toastTimer;
+let entities=[], view='dashboard', selectedId='', project='', query='', selectedQuote='', selectedPage='', readerMode='text', citations=null, aiAnswer='', aiKey='', aiModel='', noteDraft=null, toastTimer, uploadOrigin='local';
 
 async function api(path, opts={}) {
   const headers={'x-inkgraph-token':token,...opts.headers};
@@ -166,21 +166,27 @@ function guard(){return !dirty()||window.confirm('這篇筆記有尚未儲存的
 function go(next,id='') {if(!guard())return;query='';selectedQuote='';selectedPage='';readerMode=next==='source'&&byId(id)?.mime?.startsWith('image/')?'original':'text';noteDraft=null;citations=null;view=next;selectedId=id;if($('#search'))$('#search').value='';const hash=`#${next}${id?`/${id}`:''}`;history.replaceState(null,'',hash);renderMain();window.scrollTo(0,0);}
 async function download(path,name) {const response=await api(path);const blob=await response.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name||response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1]||'inkgraph-export';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);toast('輸出完成，已交給瀏覽器下載');}
 const exportURL = (format,id) => `/api/export?format=${format}${project&&project!=='inbox'?`&project=${encodeURIComponent(project)}`:''}${id?`&id=${encodeURIComponent(id)}`:''}`;
-async function uploadFiles(files) {
+function importSource() {
+  dialog('選擇匯入來源',`<p class="quiet-text">選擇資料來自哪裡，再貼上內容或匯入匯出檔案。</p><div class="actions">${button('import-file','本機文件／圖片','primary','local')}${button('paste-gemini','Gemini 對話')}${button('paste-notebooklm','NotebookLM／Gemini Notebook 筆記')}</div><p class="quiet-text">目前為手動匯入，尚未連接 Google 帳號或自動同步。</p>`,'<button type="button" data-action="close-dialog">關閉</button>');
+}
+function chooseSourceFile(origin='local') {
+  uploadOrigin=origin;$('#dialog').close();$('#upload').click();
+}
+async function uploadFiles(files,origin='local') {
   let success=0;let lastId='';const errors=[];
   for(const file of files){
     try{
       if(file.size>25*1024*1024)throw new Error(`${file.name} 超過 25 MB`);
       toast(`正在解析 ${file.name}…`);
       const base64=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result.split(',')[1]);r.onerror=()=>reject(new Error('無法讀取檔案'));r.readAsDataURL(file);});
-      const result=await(await api('/api/import',{method:'POST',body:{name:file.name,base64,projectId:project==='inbox'?null:project||null,origin:'local'}})).json();
+      const result=await(await api('/api/import',{method:'POST',body:{name:file.name,base64,projectId:project==='inbox'?null:project||null,origin}})).json();
       if(result.duplicate){toast(`${file.name} 已存在，保留原本資料`);}else success++;lastId=result.sourceId;
     }catch(error){errors.push(error.message);toast(error.message);}
   }
   await refresh(true);if(lastId)go('source',lastId);toast(`匯入結束：${success} 個新來源${errors.length?'\n'+errors.join('\n'):''}`);$('#upload').value='';
 }
-function pasteSource() {
-  dialog('匯入對話或筆記',field('來源標題','title','','text','',true)+selectField('來源','origin',[['gemini','Gemini'],['notebooklm','NotebookLM'],['manual','其他文字來源']],'gemini')+projectField(project)+field('貼上內容','text','','textarea','保留使用者／AI 角色、原有引用及時間資訊。',true),'<button type="button" data-action="close-dialog">取消</button><button type="submit" class="primary">匯入本機</button>',async fd=>{
+function pasteSource(origin='gemini') {
+  dialog(origin==='notebooklm'?'匯入 NotebookLM／Gemini Notebook 筆記':'匯入 Gemini 對話',field('來源標題','title','','text','',true)+selectField('來源','origin',[['gemini','Gemini'],['notebooklm','NotebookLM／Gemini Notebook'],['manual','其他文字來源']],origin)+projectField(project)+field('貼上內容','text','','textarea','保留使用者／AI 角色、原有引用及時間資訊。',true)+'<p class="quiet-text">也可選擇下方「匯入匯出檔案」，將已下載的檔案存入本機。目前沒有 Google 帳號自動同步。</p>','<button type="button" data-action="import-file">匯入匯出檔案</button><button type="button" data-action="close-dialog">取消</button><button type="submit" class="primary">貼上內容匯入本機</button>',async fd=>{
     const data=Object.fromEntries(fd);const s=await save('source',{...data,projectId:data.projectId||null,authors:[],cslType:'personal-communication',pages:[],warnings:['對話引用尚未配對原始文獻，請人工核對。'],parseStatus:'貼上文字'});$('#dialog').close();go('source',s.id);toast('對話已匯入本機');
   });
 }
@@ -226,7 +232,10 @@ document.addEventListener('click',async ev=>{
   const isAsync=['demo','backup','save-note','save-ai-note','print-report'].includes(action)||action.startsWith('export-');if(isAsync)target.disabled=true;
   try{
     if(action==='close-dialog'){$('#dialog').close();return;}
-    if(action==='import') {if(guard())$('#upload').click();}
+    if(action==='import') {if(guard())importSource();}
+    else if(action==='import-file')chooseSourceFile(id||$('#dialog [name="origin"]')?.value||'local');
+    else if(action==='paste-gemini')pasteSource('gemini');
+    else if(action==='paste-notebooklm')pasteSource('notebooklm');
     else if(action==='restore'){$('#restore').click();}
     else if(action==='new-project')editProject();
     else if(action==='new-source')editSource();
@@ -264,7 +273,7 @@ document.addEventListener('change',ev=>{
 document.addEventListener('selectionchange',()=>{const s=window.getSelection();if(s?.toString().trim()&&s.anchorNode?.parentElement?.closest('#source-text')){selectedQuote=s.toString();selectedPage=s.anchorNode.parentElement.closest('[data-page]')?.dataset.page||'';}});
 document.addEventListener('keydown',ev=>{if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==='k'){ev.preventDefault();$('#search').focus();}if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==='n'){ev.preventDefault();if(!$('#dialog').open)editNote();}});
 window.addEventListener('beforeunload',ev=>{if(dirty()){ev.preventDefault();ev.returnValue='';}});
-$('#upload').addEventListener('change',ev=>uploadFiles(ev.target.files));
+$('#upload').addEventListener('change',ev=>{const origin=uploadOrigin;uploadOrigin='local';uploadFiles(ev.target.files,origin);});
 $('#restore').addEventListener('change',async ev=>{const f=ev.target.files[0];if(!f)return;try{if(f.size>100*1024*1024)throw new Error('備份 ZIP 上限 100 MB');toast('正在校驗並還原…');const r=await(await api('/api/restore',{method:'POST',body:f,headers:{'Content-Type':'application/zip'}})).json();await refresh(true);toast(`已還原 ${r.added} 筆，略過 ${r.skipped} 筆相同資料`);}catch(error){toast(error.message);}finally{ev.target.value='';}});
 window.addEventListener('hashchange',()=>{const [v,id]=location.hash.slice(1).split('/');if(!guard())return;view=labels[v]?v:'dashboard';selectedId=id||'';query='';renderShell();});
 try{const [v,id]=location.hash.slice(1).split('/');view=labels[v]?v:'dashboard';selectedId=id||'';await refresh(true);}catch(error){$('#app').innerHTML=`<main class="loading"><h1>本機工作台暫時無法開啟</h1><p>${e(error.message)}</p><p>請確認本機服務已啟動，再重新整理頁面。</p></main>`;}
