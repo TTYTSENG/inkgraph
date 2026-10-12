@@ -45,7 +45,7 @@ export function makeServer({dataPath=process.env.INKGRAPH_DATA_DIR||resolve(root
           const duplicate=store.db.prepare('SELECT source_id FROM attachments WHERE sha=?').get(parsed.fileHash);
           if(duplicate) return send(200,{duplicate:true,sourceId:duplicate.source_id});
           const source=store.transaction(()=>{
-            const s=store.save('source',{title:name,authors:[],origin:b.origin||'local',projectId:b.projectId||null,cslType:'article-journal',...parsed});
+            const s=store.save('source',{title:name,authors:[],origin:b.origin||'local',projectId:b.projectId||null,cslType:['gemini','notebooklm'].includes(b.origin)?'personal-communication':'article-journal',...parsed});
             store.attach(s.id,name,parsed.mime,bytes);return s;
           });
           return send(200,{sourceId:source.id,warnings:parsed.warnings});

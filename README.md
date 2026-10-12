@@ -58,6 +58,7 @@ PORT=4318 INKGRAPH_DATA_DIR="$HOME/MyResearchVault" npm start
 
 ## 匯入 Gemini / NotebookLM
 
+- 點擊「匯入來源」，可選「本機文件／圖片」、「Gemini 對話」或「NotebookLM／Gemini Notebook 筆記」。後兩者可貼上文字或選擇「匯入匯出檔案」，保留平台來源標記，預設不列入 APA。
 - 可貼上對話／筆記，或匯入下載的 TXT、Markdown、HTML、JSON、DOCX。
 - HTML 永遠以純文字處理，原始檔案作為附件保存，不執行其中的 script。
 - JSON 與 HTML 是通用文字匯入，**尚未實作專用 Takeout 對話重建**。
