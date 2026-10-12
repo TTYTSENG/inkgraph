@@ -15,7 +15,7 @@ npm install
 npm start
 ```
 
-在 Chrome 開啟 **http://127.0.0.1:4317**。Windows 也可雙擊 `start-inkgraph.cmd`；首次使用會嘗試安裝相依套件，之後可離線啟動。
+在 Chrome 開啟 [http://127.0.0.1:4317](http://127.0.0.1:4317)。Windows 也可雙擊 `start-inkgraph.cmd`；首次使用會嘗試安裝相依套件，之後可離線啟動。
 
 使用 `Ctrl+C` 停止服務。若預設連接埠被占用，可使用環境變數 `PORT`。備份或移動資料前請先停止服務，或直接使用介面的完整 ZIP 備份。
 
@@ -68,7 +68,7 @@ PORT=4318 INKGRAPH_DATA_DIR="$HOME/MyResearchVault" npm start
 
 ## 引用與書目
 
-在写作工作區使用「插入引用」，或輸入：
+在寫作工作區使用「插入引用」，或輸入：
 
 ```text
 [@source-id]
@@ -86,7 +86,7 @@ APA formatting powered by **citeproc-js © Frank Bennett**. Official APA CSL sty
 
 來源或筆記中的「AI 整理」會開啟傳送預覽。你可改寫或刪減文字，再填入 API Key 與你帳號可用的模型 ID。只有你按下「傳送上述內容」後才會連線到 Google。
 
-API Key 只存在目前頁面記憶體，請求時傳给本機服務再轉給 Gemini；不寫入資料庫、localStorage、備份或日誌。AI 回應不會覆寫來源，可另存為「待人工核對」草稿。第一次部署的真實雲端連線需要自己的 Key；自動測試使用模擬回應，沒有呼叫付費服務。
+API Key 只存在目前頁面記憶體，請求時傳給本機服務再轉給 Gemini；不寫入資料庫、localStorage、備份或日誌。AI 回應不會覆寫來源，可另存為「待人工核對」草稿。第一次部署的真實雲端連線需要自己的 Key；自動測試使用模擬回應，沒有呼叫付費服務。
 
 ## 備份與還原
 
