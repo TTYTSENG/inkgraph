@@ -9,6 +9,8 @@ import { createKnowledgeWorkspace } from './knowledge-workspace.js';
 import { createDiscoveryWorkspace } from './discovery-workspace.js';
 import { createObjectNavigation } from './object-navigation.js';
 import { createGlossaryWorkspace } from './glossary-workspace.js';
+import { createMobileCapture } from './mobile-capture.js';
+import { captureText } from './mobile-model.js';
 const token = document.querySelector('meta[name="inkgraph-token"]').content;
 const $ = s => document.querySelector(s);
 const e = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -18,6 +20,7 @@ const paths = {
 const icon = (name) => `<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[name] || paths.note}"/></svg>`;
 const labels = {dashboard:'研究總覽',inbox:'待整理收件匣',sources:'來源文獻庫',annotations:'摘錄與加註',terms:'字彙辭典',notes:'隨記與寫作',discussions:'討論與訊息',concepts:'概念與主題',discussion:'討論工作區',message:'訊息關聯',concept:'概念工作區',annotation:'摘錄出處',term:'辭典條目',matrix:'文獻比較表',graph:'文獻脈絡',references:'APA 引用清單',exports:'輸出與備份',settings:'設定與說明',source:'閱讀工作區',note:'寫作工作區',search:'搜尋結果'};
 const relationLabels = {supports:'支持',contradicts:'反駁',extends:'延伸',compares:'比較'};
+labels.mobile='手機收件與辨識';
 const origins = {local:'本機檔案',gemini:'Gemini',notebooklm:'NotebookLM',manual:'手動建立',demo:'示範資料'};
 let entities=[], view='dashboard', selectedId='', project='', query='', selectedQuote='', selectedPage='', readerMode='text', citations=null, aiAnswer='', aiKey='', aiModel='', noteDraft=null, toastTimer, uploadOrigin='local';
 let sideNoteId='', readingSourceId='', connectionsAll=false, selectedAnnotationId='';
@@ -102,6 +105,7 @@ function editRelation(record) {const choices=records('source').map(s=>[s.id,s.ti
 function renderShell() {
   const navigation=[['dashboard','home'],['literature','search'],['web','search'],['light','upload'],['inbox','inbox'],['sources','book'],['discussions','quote'],['annotations','quote'],['concepts','graph'],['terms','term'],['notes','note'],['matrix','matrix'],['graph','graph'],['references','cite'],['exports','export']];
   const counts={inbox:scopedState(entities,'inbox').length,sources:records('source').length,annotations:records('annotation').length,terms:records('term').length,notes:records('note').length};
+  navigation.splice(4,0,['mobile','inbox']);
   $('#app').innerHTML=`<div class="layout"><aside class="sidebar"><div class="brand"><img src="/icon.svg" alt=""><div><strong>墨脈</strong><small>INKGRAPH</small></div></div><div class="nav-label">研究工作台</div><nav class="nav" aria-label="主要導覽">${navigation.map(([v,i])=>`<button data-view="${v}" class="${view===v?'active':''}">${icon(i)}<span>${labels[v]}</span>${counts[v]!==undefined?`<span class="nav-count">${counts[v]}</span>`:''}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="local-status"><span class="dot"></span>資料保存在本機</div><div>你的資料，你的研究脈絡。</div><button data-view="settings">設定與使用說明 ↗</button><div class="attribution">v0.3.0 · Open source</div></div></aside><section class="workspace"><div class="topbar"><div class="breadcrumb">我的工作台 <strong>/ ${e(labels[view])}</strong></div><label class="search" aria-label="全文搜尋">${icon('search')}<input id="search" type="search" value="${e(query)}" placeholder="搜尋文獻、摘錄、術語與筆記…" aria-label="全文搜尋"><kbd>Ctrl K</kbd></label><select id="project-filter" class="project-select" aria-label="切換專案"><option value="">全部專案</option>${ofKind('project').map(p=>`<option value="${e(p.id)}" ${project===p.id?'selected':''}>${e(p.title)}</option>`).join('')}</select><button type="button" id="quick-switch" data-action="nav-switch" title="快速切換（Ctrl＋Shift＋K）" aria-keyshortcuts="Control+Shift+K">切換 <kbd>Ctrl⇧K</kbd></button><button class="primary" data-action="new-note">＋ 隨記</button></div><main id="main" tabindex="-1"></main></section></div>`;
   renderMain();
 }
@@ -157,7 +161,7 @@ function sourcePane(s) {
   const url=s.attachment?`/files/${e(s.attachment.id)}`:'';
   let content='';
   // Evidence remains a provider assertion; importing never performs a local check.
-  if(readerMode==='original'&&url){content=s.mime?.startsWith('image/')?`<img src="${url}" class="image-preview" alt="${e(s.title)}">`:s.mime==='application/pdf'?`<iframe class="file-preview" src="${url}" title="原始 PDF"></iframe>`:`<p>這種格式請下載後使用對應的程式開啟。</p><a href="${url}" download>下載原始檔案 →</a>`;}
+  if(readerMode==='original'&&url){content=s.mime?.startsWith('image/')?`<img src="${url}" class="image-preview" alt="${e(s.title)}">`:s.mime==='audio/wav'?`<audio controls preload="metadata" src="${url}" aria-label="原始錄音"></audio><p>原始錄音；辨識逐字稿請切換文字閱讀核對。</p>`:s.mime==='application/pdf'?`<iframe class="file-preview" src="${url}" title="原始 PDF"></iframe>`:`<p>這種格式請下載後使用對應的程式開啟。</p><a href="${url}" download>下載原始檔案 →</a>`;}
   else {content=`<div id="source-text" class="source-text">${s.pages?.length?s.pages.map(p=>`<section class="source-page" data-page="${p.number}"><div class="page-number">${p.label?e(p.label):`檔案第 ${p.number} 頁 · 印刷頁碼請核對原檔`}</div>${e(p.text)||'<span class="quiet-text">此頁沒有可擷取文字。</span>'}</section>`).join(''):e(s.text||'這份來源沒有可擷取文字。請切換原始檔案閱讀，或手動建立摘錄。')}</div>`;}
   if(evidenceText(s))content=`<div class="notice" style="white-space:pre-wrap">${e(evidenceText(s))}</div>`+content;
   return `<section class="reader-main source-reading-pane" aria-label="原文閱讀區"><header class="pane-heading"><div><span class="eyebrow">ORIGINAL SOURCE</span><h2>原文閱讀</h2></div><div class="actions">${button('new-annotation','＋ 建立摘錄','small',s.id)}${button('new-term','＋ 術語','quiet small',s.id)}</div></header>${(s.warnings||[]).map(w=>`<div class="notice">${e(w)}</div>`).join('')}${s.origin==='gemini'||s.origin==='notebooklm'?'<div class="notice">AI 對話與筆記是整理素材。正式引用請核對原始文獻。</div>':''}<div class="tabs"><button data-action="reader-text" class="${readerMode==='text'?'active':''}">文字閱讀</button>${url?`<button data-action="reader-original" class="${readerMode==='original'?'active':''}">原始檔案</button><a class="quiet-text" href="${url}" download style="padding:10px">下載原檔 ↗</a>`:''}</div><article class="reader-sheet"><h2>${e(s.title)}</h2><div class="reader-meta">${e(authors(s)||'作者待補')} ${s.year?`· ${e(s.year)}`:''} · ${e(origins[s.origin]||'本機資料')}</div>${content}</article></section>`;
@@ -174,7 +178,7 @@ function noteReader() {
   const focus={...n,content:draft.value,excerptRefs:draft.excerptRefs};
   const term=n.kind==='term';
   const info=term?`<section class="reader-sheet term-info"><h2>釋義與語境</h2><small>${e(n.aliases||'')}</small><p class="knowledge-body">${e(n.definition||'釋義待補')}</p><p class="knowledge-body">辨義提醒：${e(n.scopeNote||'尚未填寫')}</p><p class="knowledge-body">例句／應用：${e(n.example||'尚未填寫')}</p><p>${glossaryWorkspace.paths(n).map(e).join('<br>')||'未分類'}</p><small>狀態：${e(n.reviewStatus||'待整理')}</small></section>`:'';
-  const writing=term?`<div class="term-writing-group">${info}${renderNoteEditor(n,draft,entities)}</div>`:renderNoteEditor(n,draft,entities);
+  const writing=term?`<div class="term-writing-group">${info}${renderNoteEditor(n,draft,entities)}</div>`:n.mobileCapture?`<div><section class="reader-sheet term-info"><h2>手機記錄時間與地點</h2><p class="knowledge-body">${e(captureText(n))}</p></section>${renderNoteEditor(n,draft,entities)}</div>`:renderNoteEditor(n,draft,entities);
   return heading(n.title,term?'保留特定作者的用法、原始依據與自己的辨義提醒。':'邊對照來源，邊形成自己的判斷。摘錄引用保留加入當時的版本。',button(term?'edit-term':'edit-note','編輯資料','',n.id)+button('glossary-convert','改列資料類型','',n.id)+button('glossary-history','改列歷程','quiet',n.id)+button('knowledge-project','專案連結','',n.id)+(!term?button('ai-note','AI 整理草稿','',n.id):'')+button('export-record','匯出','',n.id)+(split?button('close-split','關閉原文','quiet'):''))+`<div class="research-workspace ${split?'has-split':''}"><div class="research-panes">${split?sourcePane(source):''}${writing}</div>${renderConnections(entities,focus,{projectId:project,allProjects:connectionsAll,selectedAnnotationId})}</div>`;
 }
 function rememberEditor() {
@@ -283,6 +287,7 @@ function renderMain() {
   const editorBefore=$('#note-content'),caret=editorBefore?{id:noteDraft?.id,start:editorBefore.selectionStart,end:editorBefore.selectionEnd,scroll:editorBefore.scrollTop,focused:document.activeElement===editorBefore}:null;
   const content={literature:()=>literatureSearch.render(),light:()=>lightImport.render(),web:()=>webResearch.render(),discussions:()=>knowledgeWorkspace.renderList('discussion'),concepts:()=>knowledgeWorkspace.renderList('concept'),...Object.fromEntries(['discussion','message','concept','annotation','term'].map(v=>[v,()=>knowledgeWorkspace.renderRecord(selectedId)])),dashboard,inbox:()=>sourceList(true),sources:()=>sourceList(),annotations:()=>cardList('annotation'),terms:()=>cardList('term'),notes:()=>cardList('note'),source:sourceReader,note:noteReader,matrix,graph,references,exports:exportsView,settings,search:searchResults};
   content.terms=()=>glossaryWorkspace.render();content.term=noteReader;
+  content.mobile=()=>mobileCapture.render();
   if(!$('#main'))return;$('#main').innerHTML=(content[query?'search':view]||dashboard)();
   const focused=byId(selectedId);
   if(!query&&project&&project!=='inbox'&&focused&&!scopedState(entities,project).some(r=>r.id===focused.id))$('#main .page-heading')?.insertAdjacentHTML('afterend',`<div class="notice">正在跨專案參照此項目。原歸屬：${e(byId(focused.projectId)?.title||'待整理收件匣')}；尚未加入目前專案，內容仍保存在原項目。</div>`);
@@ -290,6 +295,7 @@ function renderMain() {
   if(caret&&noteDraft?.id===caret.id&&$('#note-content')){const editor=$('#note-content');editor.setSelectionRange(caret.start,caret.end);editor.scrollTop=caret.scroll;if(caret.focused)editor.focus();}
   if(view==='light'&&!query)lightImport.bind();
   if(view==='terms'&&!query)glossaryWorkspace.bind();
+  if(view==='mobile'&&!query)mobileCapture.bind();
   if(view==='literature'&&!query)literatureSearch.bind();
   if($('#search-prev'))$('#search-prev').onclick=()=>fetchSearch(Math.max(0,searchPage.offset-50));
   if($('#search-next'))$('#search-next').onclick=()=>fetchSearch(searchPage.offset+50);
@@ -463,6 +469,7 @@ document.addEventListener('click',async ev=>{
     if(action==='close-dialog'){$('#dialog').close();return;}
     if(objectNavigation.canHandle(action)){await objectNavigation.handle(action,id);return;}
     if(glossaryWorkspace.canHandle(action)){await glossaryWorkspace.handle(action,id);return;}
+    if(mobileCapture.canHandle(action)){await mobileCapture.handle(action,id);return;}
     if(discoveryWorkspace.canHandle(action)){ev.preventDefault();await discoveryWorkspace.handle(action,id);return;}
     if(knowledgeWorkspace.canHandle(action)){await knowledgeWorkspace.handle(action,id);return;}
     if(action==='import') {if(guard())importSource();}
@@ -541,6 +548,7 @@ const literatureSearch=createLiteratureSearch({api,e,heading,toast,openBundle:b=
 const webResearch=createWebResearch({api,e,heading,toast,refresh,renderMain,project:()=>project,entities:()=>entities,dialog,download});
 const knowledgeWorkspace=createKnowledgeWorkspace({api,e,heading,button,toast,refresh,go,guard,dialog,project:()=>project,entities:()=>entities,allProjects:()=>connectionsAll});
 const glossaryWorkspace=createGlossaryWorkspace({api,e,heading,button,toast,refresh,go,guard,dirty,dialog,renderMain,project:()=>project,entities:()=>entities});
+const mobileCapture=createMobileCapture({api,e,heading,button,toast,refresh,go,renderMain,dialog,project:()=>project,entities:()=>entities});
 const discoveryWorkspace=createDiscoveryWorkspace({api,refresh,go,dialog,toast,project:()=>project,entities:()=>entities,credentials:()=>({key:aiKey,model:aiModel})});
 const objectNavigation=createObjectNavigation({api,dialog,toast,project:()=>project,entities:()=>entities,open:openNavigation,capture:captureNavigation,insert:insertObjectLink,restore:restoreNavigation,save:saveNote,formal:async id=>{const note=activeNote();if(!note)throw new Error('請先開啟筆記');await knowledgeWorkspace.handle('knowledge-link',note.id);const select=$('#dialog [name="to"]');if(select)select.value=id;}});
 try{const [v,id]=location.hash.slice(1).split('/');view=labels[v]?v:'dashboard';selectedId=id||'';await refresh(true);}catch(error){$('#app').innerHTML=`<main class="loading"><h1>本機工作台暫時無法開啟</h1><p>${e(error.message)}</p><p>請確認本機服務已啟動，再重新整理頁面。</p></main>`;}

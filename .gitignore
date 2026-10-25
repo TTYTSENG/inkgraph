@@ -6,4 +6,12 @@ data/
 *.log
 coverage/
 artifacts/
+**/build/
+**/.gradle/
+**/.kotlin/
+**/local.properties
+*.jks
+*.keystore
+models/
+.venv/
 .DS_Store

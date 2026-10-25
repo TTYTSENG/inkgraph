@@ -1,5 +1,7 @@
 import { createServer } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync,createReadStream,statSync } from 'node:fs';
+import { promises as fs } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import { resolve, dirname, extname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
@@ -15,6 +17,12 @@ import { recordState } from './lib/knowledge-export.mjs';
 import { previewRecord } from './public/object-navigation.js';
 import { conversionPreview, convertEntity, conversionHistory, undoConversion } from './lib/entity-conversion.mjs';
 import { categoryImpact, deleteCategory } from './lib/taxonomy.mjs';
+import { importCapture,vaultIdentity } from './lib/mobile-import.mjs';
+import { receiveFile,externalPath } from './lib/mobile-files.mjs';
+import { MobileTransfer } from './lib/mobile-transfer.mjs';
+import { MediaJobs,resultExport } from './lib/media-jobs.mjs';
+import { hasMobileData,backupStream,restoreMobileFile } from './lib/mobile-backup.mjs';
+import { withoutMobileLocation } from './public/mobile-model.js';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const MIME = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'};
@@ -25,7 +33,7 @@ async function readBody(req, limit=40*1024*1024) {
 }
 async function jsonBody(req) { if (!(req.headers['content-type']||'').startsWith('application/json')) throw new AppError('請使用 JSON 格式',415); try{return JSON.parse((await readBody(req)).toString());}catch(e){if(e instanceof AppError)throw e;throw new AppError('JSON 格式錯誤');} }
 
-export function makeServer({dataPath=process.env.INKGRAPH_DATA_DIR||resolve(root,'data'),port=Number(process.env.PORT||4317),aiFetch=fetch,retrieveWeb,notebookFactory,literatureOptions}={}) {
+export function makeServer({dataPath=process.env.INKGRAPH_DATA_DIR||resolve(root,'data'),port=Number(process.env.PORT||4317),aiFetch=fetch,retrieveWeb,notebookFactory,literatureOptions,mobileOptions={}}={}) {
   const store=new Store(resolve(dataPath,'inkgraph.sqlite'));
   const research=new WebResearch(store,{...(retrieveWeb?{retrieve:retrieveWeb}:{}),search:async()=>[]});
   const extension=new ExtensionBridge(store);
@@ -34,6 +42,7 @@ export function makeServer({dataPath=process.env.INKGRAPH_DATA_DIR||resolve(root
   const token=randomBytes(32).toString('hex');
   const lightImport=new LightImport(store);
   const literature=new LiteratureSearch(store,literatureOptions);
+  const mobileTransfer=new MobileTransfer(store,mobileOptions),mediaJobs=new MediaJobs(store,mobileOptions);
   const server=createServer(async(req,res)=>{
     const send=(status,data,type='application/json; charset=utf-8')=>{res.writeHead(status,{'Content-Type':type});res.end(type.startsWith('application/json')?JSON.stringify(data):data);};
     res.setHeader('X-Content-Type-Options','nosniff');
@@ -155,11 +164,18 @@ export function makeServer({dataPath=process.env.INKGRAPH_DATA_DIR||resolve(root
           let state=store.list();
           if(projectId) state=projectState(state,projectId);
           if(id) {if(!store.get(id))throw new AppError('找不到輸出資料',404);state=recordState(store.list(),id);}
+          if(u.searchParams.get('omitLocation')==='1')state=withoutMobileLocation(state);
           const [type,name,body]=exportContent(state,u.searchParams.get('format')||'markdown');
           res.setHeader('Content-Disposition',`attachment; filename="${name}"`);return send(200,body,type.startsWith('application/json')?'text/json; charset=utf-8':type);
         }
-        if(u.pathname==='/api/backup'&&req.method==='GET') {const bytes=await backup(store);res.setHeader('Content-Disposition','attachment; filename="inkgraph-backup.zip"');return send(200,bytes,'application/zip');}
-        if(u.pathname==='/api/restore'&&req.method==='POST') return send(200,await restore(store,await readBody(req,100*1024*1024)));
+        if(u.pathname==='/api/mobile/status'&&req.method==='GET')return send(200,{...mediaJobs.status(),captures:store.db.prepare('SELECT device_id,capture_id,revision,note_id,manifest,received FROM mobile_captures ORDER BY received DESC LIMIT 100').all().map(r=>{const m=JSON.parse(r.manifest);return {deviceId:r.device_id,captureId:r.capture_id,revision:r.revision,noteId:r.note_id,received:r.received,text:m.capture.text.slice(0,300),createdAt:m.capture.createdAt,timezone:m.capture.timezone,location:m.capture.location,mediaCount:m.capture.media.length};})});
+        if(u.pathname==='/api/mobile/devices'&&req.method==='GET')return send(200,await mobileTransfer.devices());
+        if(u.pathname==='/api/mobile/usb'&&req.method==='POST'){const b=await jsonBody(req);try{return send(200,await mobileTransfer.pull(b.deviceId,{projectId:b.projectId||null}));}finally{mediaJobs.kick();}}
+        if(u.pathname==='/api/mobile/import'&&req.method==='POST'){const file=await receiveFile(store.mobileTempRoot,req);try{const result=await importCapture(store,file,{projectId:u.searchParams.get('project')||null});mediaJobs.kick();return send(200,result);}finally{await fs.rm(file,{force:true});}}
+        if(u.pathname==='/api/mobile/jobs'&&req.method==='POST'){const b=await jsonBody(req);if(b.action==='pause')mediaJobs.pause(b.value);else if(b.action==='cancel')mediaJobs.cancel(b.id);else if(b.action==='retry')mediaJobs.retry(b.id);else if(b.action==='reprocess')return send(200,mediaJobs.reprocess(b.sourceId,b.model));else throw new AppError('無效的辨識操作');return send(200,mediaJobs.status());}
+        if(u.pathname==='/api/mobile/result'&&req.method==='GET'){const [type,name,body]=resultExport(store,u.searchParams.get('id'),u.searchParams.get('format')||'json');res.setHeader('Content-Disposition',`attachment; filename="${name}"`);return send(200,type.startsWith('application/json')?JSON.parse(body):body,type);}
+        if(u.pathname==='/api/backup'&&req.method==='GET') {res.setHeader('Content-Disposition','attachment; filename="inkgraph-backup.zip"');if(hasMobileData(store)){const archive=backupStream(store);res.writeHead(200,{'Content-Type':'application/zip'});const finished=pipeline(archive,res);archive.finalize().catch(e=>archive.destroy(e));await finished;return;}const bytes=await backup(store);return send(200,bytes,'application/zip');}
+        if(u.pathname==='/api/restore'&&req.method==='POST'){const file=await receiveFile(store.mobileTempRoot,req,{limit:10*1024**3});try{return send(200,await restoreMobileFile(store,file));}finally{await fs.rm(file,{force:true});}}
         if(u.pathname==='/api/ai'&&req.method==='POST') {
           const b=await jsonBody(req);
           if(typeof b.key!=='string'||b.key.length<10)throw new AppError('請提供 Gemini API Key');
@@ -179,22 +195,27 @@ export function makeServer({dataPath=process.env.INKGRAPH_DATA_DIR||resolve(root
       if(u.pathname.startsWith('/files/')&&req.method==='GET') {
         if(!req.headers.cookie?.split(';').some(c=>c.trim()===`inkgraph_session=${token}`))throw new AppError('請先開啟本機工作台',403);
         const file=store.file(u.pathname.slice(7));if(!file)throw new AppError('找不到附件',404);
-        const inline=['application/pdf','image/png','image/jpeg','image/webp'].includes(file.mime);
+        const inline=['application/pdf','image/png','image/jpeg','image/webp','audio/wav'].includes(file.mime);
         res.setHeader('Content-Disposition',`${inline?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+        if(file.path){const path=externalPath(store,file),size=statSync(path).size;res.setHeader('Accept-Ranges','bytes');const range=req.headers.range;
+          if(range){const match=/^bytes=(\d+)-(\d*)$/.exec(range);if(!match)throw new AppError('無效的播放範圍',416);const start=Number(match[1]),end=match[2]?Math.min(size-1,Number(match[2])):size-1;if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start>end||start>=size)throw new AppError('播放範圍超出附件',416);res.writeHead(206,{'Content-Type':inline?file.mime:'application/octet-stream','Content-Length':end-start+1,'Content-Range':`bytes ${start}-${end}/${size}`});await pipeline(createReadStream(path,{start,end}),res);return;}
+          res.writeHead(200,{'Content-Type':inline?file.mime:'application/octet-stream','Content-Length':size});await pipeline(createReadStream(path),res);return;}
         return send(200,Buffer.from(file.bytes),inline?file.mime:'application/octet-stream');
       }
       if(req.method!=='GET')throw new AppError('不支援的操作',405);
       const files={'/':'index.html','/app.js':'app.js','/web-research.js':'web-research.js','/light-import.js':'light-import.js','/research-evidence.js':'research-evidence.js','/literature-search.js':'literature-search.js','/project-scope.js':'project-scope.js','/research-workspace.js':'research-workspace.js','/workspace-view.js':'workspace-view.js','/knowledge-model.js':'knowledge-model.js','/knowledge-workspace.js':'knowledge-workspace.js','/object-navigation.js':'object-navigation.js','/discovery-model.js':'discovery-model.js','/discovery-workspace.js':'discovery-workspace.js','/style.css':'style.css','/icon.svg':'icon.svg'};
       files['/glossary-workspace.js']='glossary-workspace.js';files['/taxonomy-model.js']='taxonomy-model.js';
+      files['/mobile-capture.js']='mobile-capture.js';
+      files['/mobile-model.js']='mobile-model.js';
       const file=files[u.pathname];if(!file)throw new AppError('找不到頁面',404);
       let body=readFileSync(resolve(root,'public',file));
-      if(file==='index.html') {body=body.toString().replace('__SESSION_TOKEN__',token);res.setHeader('Set-Cookie',`inkgraph_session=${token}; HttpOnly; SameSite=Strict; Path=/`);}
+      if(file==='index.html') {body=body.toString().replace('__SESSION_TOKEN__',token);if(process.env.INKGRAPH_DISPOSABLE==='1')body=body.replace('<body>','<body><div class="mobile-mode-banner">手機 App 隔離測試工作區 · 正式研究庫未變更</div>');res.setHeader('Set-Cookie',`inkgraph_session=${token}; HttpOnly; SameSite=Strict; Path=/`);}
       res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; frame-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'");
       return send(200,body,MIME[extname(file)]);
-    }catch(e){send(e.status||500,{error:e instanceof AppError?e.message:e.name==='TimeoutError'?'請求逾時，請稍後重試。':'本機處理失敗，請檢查檔案或重新啟動。'});}
+    }catch(e){if(res.headersSent){res.destroy(e);return;}send(e.status||500,{error:e instanceof AppError?e.message:e.name==='TimeoutError'?'請求逾時，請稍後重試。':'本機處理失敗，請檢查檔案或重新啟動。'});}
   });
-  server.on('close',()=>{extension.close();if(notebooks!==extension)notebooks.close().catch(()=>{});});
-  return {server,store,token,port,extension};
+  server.on('close',()=>{mediaJobs.close();extension.close();if(notebooks!==extension)notebooks.close().catch(()=>{});});
+  return {server,store,token,port,extension,mediaJobs,mobileTransfer};
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const app=makeServer();

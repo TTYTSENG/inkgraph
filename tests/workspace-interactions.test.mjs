@@ -15,6 +15,8 @@ import { createKnowledgeWorkspace } from '../public/knowledge-workspace.js';
 import { createDiscoveryWorkspace } from '../public/discovery-workspace.js';
 import { createObjectNavigation } from '../public/object-navigation.js';
 import { createGlossaryWorkspace } from '../public/glossary-workspace.js';
+import { createMobileCapture } from '../public/mobile-capture.js';
+import { captureText } from '../public/mobile-model.js';
 
 async function until(predicate) {
   for(let attempt=0;attempt<100;attempt++){
@@ -45,7 +47,7 @@ async function harness(run,initial='source') {
     window.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open');};
     window.addEventListener('error',event=>errors.push(event.error?.message||event.message));
     const unused=()=>({render:()=>'',bind:()=>{}});
-    window.__workspaceModules={...references,...views,scopedState,projectsOf,evidenceText,createGlossaryWorkspace:options=>createGlossaryWorkspace({...options,dom:document}),createObjectNavigation:options=>createObjectNavigation({...options,dom:document}),createDiscoveryWorkspace:options=>createDiscoveryWorkspace({...options,dom:document}),createKnowledgeWorkspace:options=>createKnowledgeWorkspace({...options,dom:document}),createWebResearch:unused,createLightImport:unused,createLiteratureSearch:unused};
+    window.__workspaceModules={...references,...views,scopedState,projectsOf,evidenceText,captureText,createMobileCapture:options=>createMobileCapture({...options,dom:document}),createGlossaryWorkspace:options=>createGlossaryWorkspace({...options,dom:document}),createObjectNavigation:options=>createObjectNavigation({...options,dom:document}),createDiscoveryWorkspace:options=>createDiscoveryWorkspace({...options,dom:document}),createKnowledgeWorkspace:options=>createKnowledgeWorkspace({...options,dom:document}),createWebResearch:unused,createLightImport:unused,createLiteratureSearch:unused};
     const appSource=readFileSync(new URL('../public/app.js',import.meta.url),'utf8').replace(/^import .*;\r?$/gm,'');
     await window.eval(`(async()=>{const {${Object.keys(window.__workspaceModules).join(',')}}=window.__workspaceModules;${appSource}\n})()`);
     const click=selector=>{const element=document.querySelector(selector);assert.ok(element,selector);element.click();};

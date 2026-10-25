@@ -1,5 +1,7 @@
 # 墨脈 InkGraph
 
+Android 隨手記測試版：支援文字、照片與錄音、USB 匯入、本地 OCR／語音轉文字，以及時間地點保存。請先閱讀 [操作與建置說明](docs/ANDROID-CAPTURE.md)；目前為獨立測試工作區，正式研究庫尚未切換。
+
 **用 Chrome 開啟的本地研究知識工作台。** 把文獻、原文摘錄、釋義、概念辭典和自己的思考連起來。資料庫與原始附件保存在你的電腦；只有你明確送出的文字才會交給可選的 Gemini API。
 
 ![InkGraph research dashboard](docs/screenshots/dashboard.jpg)
