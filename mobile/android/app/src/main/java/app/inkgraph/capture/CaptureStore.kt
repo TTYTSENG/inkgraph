@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.provider.MediaStore
+import android.content.ContentUris
 import org.json.JSONObject
 import org.json.JSONArray
 import java.io.File
@@ -29,6 +30,7 @@ class CaptureStore private constructor(private val ctx: Context): SQLiteOpenHelp
     val deviceId: String get() { val current=prefs.getString("deviceId",null);if(current!=null)return current;val id=UUID.randomUUID().toString();check(prefs.edit().putString("deviceId",id).commit());return id }
     @Synchronized fun read(id: String): JSONObject? = readableDatabase.rawQuery("SELECT data FROM captures WHERE id=?",arrayOf(id)).use { if(it.moveToFirst())JSONObject(it.getString(0)) else null }
     @Synchronized fun all(): List<JSONObject> = readableDatabase.rawQuery("SELECT data FROM captures ORDER BY rowid DESC",null).use { c -> val rows=mutableListOf<JSONObject>();while(c.moveToNext())rows.add(JSONObject(c.getString(0)));rows }
+    @Synchronized fun updateLocationIfPresent(id:String,change:(JSONObject)->Unit){if(read(id)!=null)mutate(id){change(it.getJSONObject("location"))}}
     @Synchronized fun mutate(id: String, change: (JSONObject)->Unit): JSONObject {
         val db=writableDatabase;db.beginTransaction();try{val row=read(id)?:error("找不到草稿");change(row);row.put("updatedAt",now());db.insertWithOnConflict("captures",null,ContentValues().apply{put("id",id);put("data",row.toString())},SQLiteDatabase.CONFLICT_REPLACE);db.setTransactionSuccessful();return row}finally{db.endTransaction()}
     }
@@ -40,6 +42,31 @@ class CaptureStore private constructor(private val ctx: Context): SQLiteOpenHelp
     fun mediaDir(id: String): File { require(id.matches(Regex("[a-f0-9-]{36}")));return File(ctx.filesDir,"captures/$id/media").apply{mkdirs()} }
     fun addMedia(id: String, media: JSONObject) { mutate(id){it.getJSONArray("media").put(media);it.remove("inflight")} }
     fun mediaMeta(id: String, file: File, type: String, mime: String, at: String=now()): JSONObject = JSONObject().put("id",id).put("file","media/${file.name}").put("name",file.name).put("type",type).put("mime",mime).put("size",file.length()).put("sha256",sha(file)).put("capturedAt",at)
+    @Synchronized fun deleteCapture(id:String) {
+        require(UUID.fromString(id).toString()==id){"記錄識別碼不正確"}
+        val row=read(id)?:error("找不到記錄")
+        check(!row.optBoolean("recording")&&!RecordingService.inProcessRecording){"請先停止錄音，等片段保存完成"}
+        val captures=File(ctx.filesDir,"captures").canonicalFile
+        val record=File(captures,id).canonicalFile
+        check(record.parentFile==captures){"附件路徑不正確"}
+        val resolver=ctx.contentResolver
+        val path="Download/InkGraph-Capture/$deviceId"
+        val names=Regex("^${Regex.escape(id)}-r[1-9][0-9]*(?: \\([0-9]+\\))?\\.igc$")
+        val packages=mutableListOf<android.net.Uri>()
+        resolver.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI,arrayOf(MediaStore.Downloads._ID,MediaStore.Downloads.DISPLAY_NAME,MediaStore.MediaColumns.OWNER_PACKAGE_NAME),"${MediaStore.Downloads.RELATIVE_PATH}=? OR ${MediaStore.Downloads.RELATIVE_PATH}=?",arrayOf(path,"$path/"),null)?.use{cursor->
+            while(cursor.moveToNext())if(cursor.getString(2)==ctx.packageName&&names.matches(cursor.getString(1)))packages.add(ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI,cursor.getLong(0)))
+        }?:error("無法檢查手機傳輸包，尚未刪除記錄")
+        // Remove outbox packages first so a deleted capture cannot be imported later.
+        for(uri in packages)check(resolver.delete(uri,null,null)>0){"無法刪除傳輸包，記錄仍保留，請重試"}
+        check(!record.exists()||record.deleteRecursively()){"部分附件無法刪除，請重試"}
+        val frozenNames=Regex("^${Regex.escape(id)}-r[1-9][0-9]*\\.json(?:\\.partial)?$")
+        for(file in File(ctx.filesDir,"exports").listFiles().orEmpty())if(frozenNames.matches(file.name))check(file.delete()){"無法刪除匯出索引，請重試"}
+        for(file in ctx.cacheDir.listFiles().orEmpty())if(file.name.endsWith(".partial")&&names.matches(file.name.removeSuffix(".partial")))check(file.delete()){"無法刪除傳輸暫存，請重試"}
+        check(writableDatabase.delete("captures","id=?",arrayOf(id))==1){"記錄刪除失敗"}
+        val edit=prefs.edit()
+        for(key in prefs.all.keys)if(key.startsWith("export:$id:")||key.startsWith("received:$id:"))edit.remove(key)
+        edit.apply()
+    }
     fun export(id: String): Pair<String,String> {
         val row=read(id)?:error("找不到記錄");check(!row.optBoolean("recording")){"請先停止錄音"};check(row.optString("text").isNotBlank()||row.getJSONArray("media").length()>0){"請輸入文字、錄音或照片"}
         val capture=JSONObject(row.toString());capture.remove("recording");capture.remove("inflight");capture.remove("completed");capture.put("completedAt",now())

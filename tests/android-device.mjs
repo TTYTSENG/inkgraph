@@ -16,8 +16,17 @@ tap(list.find(n=>n.text==='查看全部記錄與傳輸狀態'));await wait(400);
 const item=list.find(n=>n.text.startsWith('電腦已接收 ·')||n.text.startsWith('待傳輸／待回執 ·'));if(item){tap(item);await wait(300);list=nodes();assert.ok(list.some(n=>n.text==='記錄與傳輸狀態'));assert.equal(list.filter(n=>n.class==='android.widget.EditText').length,0);tap(list.find(n=>n.text==='返回首頁'));}
 else tap(list.find(n=>n.text==='關閉'));
 let draftTested=false;
+let deletionTested=false;
+function findScrolled(text){for(let i=0;i<6;i++){const found=nodes().find(n=>n.text===text);if(found)return found;run(['shell','input','swipe','540','1900','540','700','250']);}throw Error('Missing visible control: '+text);}
+if(process.argv.includes('--delete')){
+  await wait(300);list=nodes();const initialDrafts=list.find(n=>n.text.startsWith('草稿 '))?.text;assert.ok(initialDrafts);
+  tap(list.find(n=>n.text.includes('新增筆記')));await wait(400);list=nodes();const editors=list.filter(n=>n.class==='android.widget.EditText');assert.ok(editors.length>=2);tap(editors[editors.length-1]);run(['shell','input','text','IGDELETEONLY20261025']);await wait(1200);run(['shell','input','keyevent','4']);
+  tap(findScrolled('刪除此記錄'));await wait(300);list=nodes();assert.ok(list.some(n=>n.text.includes('尚未確認傳到電腦')));tap(list.find(n=>n.text==='取消'));await wait(200);assert.ok(nodes().some(n=>n.class==='android.widget.EditText'&&n.text.includes('IGDELETEONLY20261025')));
+  tap(findScrolled('刪除此記錄'));await wait(200);tap(nodes().find(n=>n.text==='確認刪除'));await wait(1000);list=nodes();assert.ok(list.some(n=>n.text===initialDrafts));
+  run(['shell','am','force-stop',pkg]);run(['shell','am','start','-n',activity]);await wait(500);assert.ok(nodes().some(n=>n.text===initialDrafts));deletionTested=true;
+}
 if(process.argv.includes('--draft')){
   await wait(300);list=nodes();tap(list.find(n=>n.text.includes('新增筆記')));await wait(400);list=nodes();const editors=list.filter(n=>n.class==='android.widget.EditText');assert.ok(editors.length>=2);tap(editors[editors.length-1]);run(['shell','input','text','IGDRAFTCHECK20261025']);await wait(1500);
   run(['shell','am','force-stop',pkg]);run(['shell','am','start','-n',activity]);await wait(500);list=nodes();tap(list.find(n=>n.text.startsWith('草稿 ')));await wait(250);list=nodes();assert.ok(list.some(n=>n.text.includes('IGDRAFTCHECK20261025')));tap(list.find(n=>n.text==='關閉'));draftTested=true;
 }
-console.log(JSON.stringify({visibleHomeEntries:true,completedRecordReadOnly:true,draftSurvivesProcessRestart:draftTested?'passed':'not-run',screenshot:'artifacts/android-home-status.png'}));
+console.log(JSON.stringify({visibleHomeEntries:true,completedRecordReadOnly:true,draftSurvivesProcessRestart:draftTested?'passed':'not-run',syntheticDeletionAndCancel:deletionTested?'passed':'not-run',screenshot:'artifacts/android-home-status.png'}));
