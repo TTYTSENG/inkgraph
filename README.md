@@ -6,9 +6,11 @@
 
 第一版 `v0.1.0` 是可以實際使用的單人本地應用。適用於學術研究、專案整理與日常筆記。
 
+已支援 [Light Skills 研究成果匯入](docs/LIGHT-IMPORT.md)：在 Codex 整理文獻、摘錄、筆記及關係後，於墨脈側欄「Light 成果匯入」預覽、判重並確認匯入；可撤回尚未修改或被引用的新增批次。
+
 ## 快速開始
 
-需要 **Node.js 24 或更新版本**。安裝 Node.js 後，在專案目錄執行：
+需要 **Node.js 24.15 或更新版本**。安裝 Node.js 後，在專案目錄執行：
 
 ```sh
 npm install
@@ -109,6 +111,12 @@ API Key 只存在目前頁面記憶體，請求時傳給本機服務再轉給 Ge
 
 ## 開發與驗證
 
+專案改名、待整理文章點選修正、批量加入／新建專案及 Word／Excel／PowerPoint 格式支援，見 [2026-10-25 更新說明](docs/PROJECT-INBOX-OFFICE-2026-10-25.md)。
+
+筆記中的研究連結、點擊預覽、快速切換與快捷鍵／語法提示，見 [第一批內建操作說明](docs/NATIVE-NAVIGATION-BATCH1.md)。
+
+局部關係圖、未連結提及及預設關閉的 AI 語意推薦，見 [第三階段操作與驗證](docs/PHASE3-DISCOVERY.md)。入口在個別研究項目右側的「探索關係」。
+
 ```sh
 npm run check
 npm test
@@ -120,6 +128,15 @@ npm test
 
 ## 開源授權
 
+字彙改列、三軸分類、完整說明與多來源操作，見 [字彙辭典操作說明](docs/GLOSSARY.md)。
+
+研究工作區的原文／筆記並排閱讀、固定版本摘錄，見 [第一階段操作說明](docs/PHASE1-WORKSPACE.md)。討論、概念、跨專案雙向關係及匯出範圍，見 [第二階段操作與驗證](docs/PHASE2-CONNECTIONS.md)。
+
 墨脈 InkGraph 使用 **GNU AGPL v3 或更新版本**，詳見 [LICENSE](LICENSE)。引用引擎採其原始碼授權聲明允許的 AGPL v3+ 選項；第三方套件及 CSL 資產保留各自授權。研究資料與上傳附件不因程式碼的開源授權而自動公開。
 
 Copyright © 2026 InkGraph contributors.
+
+## 網頁研究與 Google Notebook 工作流
+
+側欄「網頁研究」優先透過一般 Google Chrome 擴充功能與 Google 搜尋，支援同站候選文章、勾選轉 Markdown、本機歷史與 Notebook 上傳／舊版替換。首次使用需在 chrome://extensions 載入本專案的 chrome-extension 資料夾，在一般 Chrome 手動登入 Google，並以擴充功能連接墨脈與目標筆記本。操作與限制請見 [網頁研究使用說明](docs/WEB-RESEARCH.md)。
+

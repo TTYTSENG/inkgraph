@@ -14,3 +14,17 @@ InkGraph original code is licensed under GNU AGPL v3 or later. Dependencies and 
 APA style and locale assets are bundled verbatim in vendor. The Creative Commons Attribution-ShareAlike 3.0 license applies to those assets: https://creativecommons.org/licenses/by-sa/3.0/ . Bundled upstream README files supply further attribution and repository context.
 
 The interface and report footer acknowledge the citation processor. Source screenshots contain only synthetic demonstration content. No user research documents or API credentials are part of the repository.
+
+## Web research dependencies
+
+Direct dependencies added for web research retain upstream notices in node_modules:
+
+| Component | Version | License | Source |
+| --- | --- | --- | --- |
+| Mozilla Readability | 0.6.0 | Apache-2.0 | https://github.com/mozilla/readability |
+| jsdom | 30.1.2 | MIT | https://github.com/jsdom/jsdom |
+| Turndown | 7.2.4 | MIT | https://github.com/mixmark-io/turndown |
+| turndown-plugin-gfm | 1.0.2 | MIT | https://github.com/mixmark-io/turndown-plugin-gfm |
+| Playwright Core | 1.64.1 | Apache-2.0; bundled third-party notices retained | https://github.com/microsoft/playwright |
+| https-proxy-agent | 9.1.0 | MIT | https://github.com/TooTallNate/proxy-agents |
+

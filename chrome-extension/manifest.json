@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "墨脈 InkGraph 研究連接器",
+  "version": "0.2.0",
+  "description": "在一般 Chrome 搜尋、擷取文章，將勾選的 Markdown 上傳至你連接的 Google Notebook，回寫本機紀錄。",
+  "permissions": ["activeTab", "scripting", "storage", "alarms"],
+  "host_permissions": ["http://127.0.0.1:4317/*"],
+  "optional_host_permissions": ["https://*/*"],
+  "background": {"service_worker": "background.js", "type": "module"},
+  "action": {"default_title": "墨脈連接器", "default_popup": "popup.html"}
+}

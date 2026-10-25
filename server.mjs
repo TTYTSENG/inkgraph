@@ -7,6 +7,14 @@ import { Store, AppError } from './lib/store.mjs';
 import { parseFile } from './lib/imports.mjs';
 import { bibliography, missingFields } from './lib/citations.mjs';
 import { exportContent, backup, restore, projectState } from './lib/exports.mjs';
+import { WebResearch } from './lib/web-research.mjs';
+import { ExtensionBridge,extensionIdOK } from './lib/extension-bridge.mjs';
+import { LightImport, lightExample } from './lib/light-import.mjs';
+import { LiteratureSearch } from './lib/literature-search.mjs';
+import { recordState } from './lib/knowledge-export.mjs';
+import { previewRecord } from './public/object-navigation.js';
+import { conversionPreview, convertEntity, conversionHistory, undoConversion } from './lib/entity-conversion.mjs';
+import { categoryImpact, deleteCategory } from './lib/taxonomy.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const MIME = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'};
@@ -17,9 +25,15 @@ async function readBody(req, limit=40*1024*1024) {
 }
 async function jsonBody(req) { if (!(req.headers['content-type']||'').startsWith('application/json')) throw new AppError('請使用 JSON 格式',415); try{return JSON.parse((await readBody(req)).toString());}catch(e){if(e instanceof AppError)throw e;throw new AppError('JSON 格式錯誤');} }
 
-export function makeServer({dataPath=process.env.INKGRAPH_DATA_DIR||resolve(root,'data'),port=Number(process.env.PORT||4317),aiFetch=fetch}={}) {
+export function makeServer({dataPath=process.env.INKGRAPH_DATA_DIR||resolve(root,'data'),port=Number(process.env.PORT||4317),aiFetch=fetch,retrieveWeb,notebookFactory,literatureOptions}={}) {
   const store=new Store(resolve(dataPath,'inkgraph.sqlite'));
+  const research=new WebResearch(store,{...(retrieveWeb?{retrieve:retrieveWeb}:{}),search:async()=>[]});
+  const extension=new ExtensionBridge(store);
+  const notebooks=notebookFactory?notebookFactory(store,dataPath):extension;
+  const browserResearch=new WebResearch(store,{retrieve:url=>notebooks.retrieveArticle(url),search:query=>notebooks.searchArticles(query)});
   const token=randomBytes(32).toString('hex');
+  const lightImport=new LightImport(store);
+  const literature=new LiteratureSearch(store,literatureOptions);
   const server=createServer(async(req,res)=>{
     const send=(status,data,type='application/json; charset=utf-8')=>{res.writeHead(status,{'Content-Type':type});res.end(type.startsWith('application/json')?JSON.stringify(data):data);};
     res.setHeader('X-Content-Type-Options','nosniff');
@@ -32,12 +46,97 @@ export function makeServer({dataPath=process.env.INKGRAPH_DATA_DIR||resolve(root
       if(!hosts.includes(req.headers.host)) throw new AppError('拒絕非本機主機名稱',403);
       const u=new URL(req.url,'http://127.0.0.1');
       const origin=req.headers.origin;
+      if(u.pathname.startsWith('/api/extension/')){
+        const id=req.headers['x-inkgraph-extension'];
+        if(origin&&!/^chrome-extension:\/\/[a-p]{32}$/.test(origin))throw new AppError('僅接受已連接的 Chrome 擴充功能',403);
+        if(origin){res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');}
+        res.setHeader('Cross-Origin-Resource-Policy','cross-origin');
+        if(req.method==='OPTIONS'){
+          if(!origin)throw new AppError('缺少擴充功能來源',403);
+          res.setHeader('Access-Control-Allow-Methods','POST, OPTIONS');
+          res.setHeader('Access-Control-Allow-Headers','Content-Type, X-Inkgraph-Extension, X-Inkgraph-Capability, X-Inkgraph-Token');return send(204,'','text/plain');
+        }
+        if(!extensionIdOK(id)||(origin&&origin!==`chrome-extension://${id}`))throw new AppError('擴充功能來源不符',403);
+        if(req.method!=='POST')throw new AppError('不支援的操作',405);
+        if(u.pathname==='/api/extension/pair'){
+          if(req.headers['x-inkgraph-token']!==token)throw new AppError('請在一般 Chrome 的墨脈分頁重新連接。',403);
+          return send(200,extension.pair(id));
+        }
+        extension.authenticate(id,req.headers['x-inkgraph-capability']);
+        if(u.pathname==='/api/extension/poll'){const b=await jsonBody(req);return send(200,extension.poll(b.notebooks));}
+        if(u.pathname==='/api/extension/complete'){const b=await jsonBody(req);return send(200,extension.complete(b.jobId,b.lease,b.result));}
+        throw new AppError('找不到擴充功能操作',404);
+      }
       if(origin&&!hosts.some(h=>origin===`http://${h}`)) throw new AppError('拒絕跨來源請求',403);
       if(u.pathname==='/health'&&req.method==='GET') return send(200,{ok:true,version:'0.1.0'});
       if(u.pathname.startsWith('/api/')) {
         if(req.headers['x-inkgraph-token']!==token) throw new AppError('本機工作階段已過期，請重新整理。',403);
-        if(u.pathname==='/api/state'&&req.method==='GET') return send(200,{entities:store.state(),version:'0.1.0'});
-        if(u.pathname==='/api/entities'&&req.method==='POST') { const b=await jsonBody(req); if(b.id&&!store.get(b.id))throw new AppError('找不到要更新的資料',404); return send(200,store.save(b.kind,b.data,b.id)); }
+        if(u.pathname==='/api/web/version'&&req.method==='GET'){
+          const source=store.get(u.searchParams.get('source'));
+          const version=source?.kind==='source'&&source.webVersions?.find(v=>v.id===u.searchParams.get('version'));
+          if(!version)throw new AppError('找不到歷史版本',404);
+          const file=store.files().find(f=>f.source_id===source.id&&f.name===version.name);
+          if(!file)throw new AppError('歷史附件遺失',404);
+          res.setHeader('Content-Disposition',`attachment; filename="inkgraph-${version.id}.md"`);
+          return send(200,Buffer.from(file.bytes),'text/markdown; charset=utf-8');
+        }
+        if(u.pathname==='/api/web/discover'&&req.method==='POST'){const b=await jsonBody(req);return send(200,await (b.browser?browserResearch:research).discover(b.url,String(b.topic||'').slice(0,200)));}
+        if(u.pathname==='/api/web/capture'&&req.method==='POST'){const b=await jsonBody(req);return send(200,await (b.browser?browserResearch:research).capture(b.url,b.projectId||null));}
+        if(u.pathname==='/api/notebooks/open'&&req.method==='POST')return send(200,{message:'請在一般 Chrome 手動開啟 Google Notebook 並登入，點擴充功能「連接這本筆記本」。'});
+        if(u.pathname==='/api/notebooks'&&req.method==='GET')return send(200,extension.status());
+        if(u.pathname==='/api/notebooks/jobs'&&req.method==='GET')return send(200,extension.jobStatus(u.searchParams.get('id')));
+        if(u.pathname==='/api/notebooks/sync'&&req.method==='POST'){const b=await jsonBody(req);return send(200,await notebooks.sync(b.sourceIds,b.notebook,{replace:b.replace===true}));}
+        if(u.pathname==='/api/light/example'&&req.method==='GET')return send(200,lightExample);
+        if(u.pathname==='/api/literature/search'&&req.method==='POST')return send(200,await literature.run(await jsonBody(req)));
+        if(u.pathname==='/api/literature/cancel'&&req.method==='POST')return send(200,literature.cancel((await jsonBody(req)).id));
+        if(u.pathname==='/api/literature/history'&&req.method==='GET')return send(200,literature.history());
+        if(u.pathname==='/api/literature/result'&&req.method==='GET')return send(200,literature.result(u.searchParams.get('id')));
+        if(u.pathname==='/api/literature/bundle'&&req.method==='POST'){const b=await jsonBody(req);return send(200,literature.bundle(b.id,b.keys));}
+        if(u.pathname==='/api/search'&&req.method==='GET')return send(200,store.search(u.searchParams.get('q'),{projectId:u.searchParams.get('project')||'',offset:u.searchParams.get('offset'),limit:u.searchParams.get('limit')}));
+        if(u.pathname==='/api/entity'&&req.method==='GET'){const r=store.get(u.searchParams.get('id'));if(!r)throw new AppError('找不到資料',404);return send(200,u.searchParams.get('preview')==='1'?previewRecord(r):r.kind==='source'?{...r,attachment:store.attachment(r.id)}:r);}
+        if(u.pathname==='/api/sources/batch-project'&&req.method==='POST')return send(200,store.batchLinkSources(await jsonBody(req)));
+        if(u.pathname==='/api/sources/project'&&req.method==='POST'){
+          const b=await jsonBody(req);
+          if(!['link','unlink'].includes(b.operation))throw new AppError('請選擇加入或解除連結');
+          return send(200,b.operation==='link'?store.linkSource(b.id,b.projectId):store.unlinkSource(b.id,b.projectId,b.revision));
+        }
+        if(u.pathname==='/api/objects/project'&&req.method==='POST'){
+          const b=await jsonBody(req);
+          if(!['link','unlink'].includes(b.operation))throw new AppError('請選擇加入或解除連結');
+          return send(200,b.operation==='link'?store.linkEntity(b.id,b.projectId):store.unlinkEntity(b.id,b.projectId,b.revision));
+        }
+        if(u.pathname==='/api/discussions/from-source'&&req.method==='POST')return send(200,store.discussionFromSource(await jsonBody(req)));
+        if(u.pathname==='/api/notes/from-discussion'&&req.method==='POST')return send(200,store.noteFromDiscussion(await jsonBody(req)));
+        if(u.pathname==='/api/light/batches'&&req.method==='GET')return send(200,lightImport.batches());
+        if(u.pathname==='/api/light/preview'&&req.method==='POST'){const b=await jsonBody(req);return send(200,lightImport.preview(b.bundle,b.projectId||null,b.excludedIds));}
+        if(u.pathname==='/api/light/commit'&&req.method==='POST'){const b=await jsonBody(req);return send(200,lightImport.commit(b.bundle,b.projectId||null,b.fingerprint,b.excludedIds));}
+        if(u.pathname==='/api/light/undo'&&req.method==='POST'){const b=await jsonBody(req);return send(200,lightImport.undo(b.batch));}
+        if(u.pathname==='/api/state'&&req.method==='GET') return send(200,{entities:store.state({summary:u.searchParams.get('summary')==='1'}),version:'0.3.0'});
+        if(u.pathname==='/api/entities/delete-preview'&&req.method==='GET') return send(200,store.entityDeletionPreview(u.searchParams.get('id')));
+        if(u.pathname==='/api/entities'&&req.method==='DELETE') {
+          const b=await jsonBody(req);
+          if(b.confirm!==true)throw new AppError('請先確認刪除資料');
+          return send(200,store.deleteEntity(b.id,b.fingerprint));
+        }
+        if(u.pathname==='/api/sources/delete-preview'&&req.method==='GET') return send(200,store.sourceDeletionPreview(u.searchParams.get('id')));
+        if(u.pathname==='/api/sources'&&req.method==='DELETE') {
+          const b=await jsonBody(req);
+          if(b.confirm!==true)throw new AppError('請先確認刪除文獻');
+          return send(200,store.deleteSource(b.id,b.fingerprint));
+        }
+        if(u.pathname==='/api/conversion/preview'&&req.method==='POST')return send(200,conversionPreview(store,await jsonBody(req)));
+        if(u.pathname==='/api/conversion/commit'&&req.method==='POST')return send(200,convertEntity(store,await jsonBody(req)));
+        if(u.pathname==='/api/conversion/history'&&req.method==='GET')return send(200,conversionHistory(store,u.searchParams.get('id')));
+        if(u.pathname==='/api/conversion/undo'&&req.method==='POST')return send(200,undoConversion(store,await jsonBody(req)));
+        if(u.pathname==='/api/categories/preview'&&req.method==='GET')return send(200,categoryImpact(store,u.searchParams.get('id')));
+        if(u.pathname==='/api/categories'&&req.method==='DELETE')return send(200,deleteCategory(store,await jsonBody(req)));
+        if(u.pathname==='/api/entities'&&req.method==='POST') {
+          const b=await jsonBody(req),old=b.id?store.get(b.id):null;
+          if(b.kind==='conversion-history'||old?.kind==='conversion-history')throw new AppError('改列歷程只能由改列流程產生');
+          if(b.id&&!old)throw new AppError('找不到要更新的資料',404);
+          if(old?.kind==='source'&&Object.hasOwn(b.data||{},'projectId')&&(old.projectId||null)!==(b.data.projectId||null))throw new AppError('請使用「專案連結」加入或解除歸屬，以檢查相關筆記與摘錄');
+          return send(200,store.save(b.kind,b.data,b.id));
+        }
         if(u.pathname==='/api/import'&&req.method==='POST') {
           const b=await jsonBody(req); const name=basename(String(b.name||'')).slice(0,250);
           if(!name||typeof b.base64!=='string'||!b.base64||!/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64))throw new AppError('檔案資料錯誤');
@@ -55,7 +154,7 @@ export function makeServer({dataPath=process.env.INKGRAPH_DATA_DIR||resolve(root
           const projectId=u.searchParams.get('project');const id=u.searchParams.get('id');
           let state=store.list();
           if(projectId) state=projectState(state,projectId);
-          if(id) {const selected=store.get(id);if(!selected)throw new AppError('找不到輸出資料',404);let sourceIds=selected.sourceIds||[];if(selected.sourceId)sourceIds=[selected.sourceId];if(selected.kind==='source')sourceIds=[selected.id];const matches=(selected.content||'').matchAll(/\[@([a-zA-Z0-9-]+)/g);sourceIds=[...sourceIds,...Array.from(matches,m=>m[1])];state=store.list().filter(e=>e.id===id||sourceIds.includes(e.id));}
+          if(id) {if(!store.get(id))throw new AppError('找不到輸出資料',404);state=recordState(store.list(),id);}
           const [type,name,body]=exportContent(state,u.searchParams.get('format')||'markdown');
           res.setHeader('Content-Disposition',`attachment; filename="${name}"`);return send(200,body,type.startsWith('application/json')?'text/json; charset=utf-8':type);
         }
@@ -85,7 +184,8 @@ export function makeServer({dataPath=process.env.INKGRAPH_DATA_DIR||resolve(root
         return send(200,Buffer.from(file.bytes),inline?file.mime:'application/octet-stream');
       }
       if(req.method!=='GET')throw new AppError('不支援的操作',405);
-      const files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/icon.svg':'icon.svg'};
+      const files={'/':'index.html','/app.js':'app.js','/web-research.js':'web-research.js','/light-import.js':'light-import.js','/research-evidence.js':'research-evidence.js','/literature-search.js':'literature-search.js','/project-scope.js':'project-scope.js','/research-workspace.js':'research-workspace.js','/workspace-view.js':'workspace-view.js','/knowledge-model.js':'knowledge-model.js','/knowledge-workspace.js':'knowledge-workspace.js','/object-navigation.js':'object-navigation.js','/discovery-model.js':'discovery-model.js','/discovery-workspace.js':'discovery-workspace.js','/style.css':'style.css','/icon.svg':'icon.svg'};
+      files['/glossary-workspace.js']='glossary-workspace.js';files['/taxonomy-model.js']='taxonomy-model.js';
       const file=files[u.pathname];if(!file)throw new AppError('找不到頁面',404);
       let body=readFileSync(resolve(root,'public',file));
       if(file==='index.html') {body=body.toString().replace('__SESSION_TOKEN__',token);res.setHeader('Set-Cookie',`inkgraph_session=${token}; HttpOnly; SameSite=Strict; Path=/`);}
@@ -93,7 +193,8 @@ export function makeServer({dataPath=process.env.INKGRAPH_DATA_DIR||resolve(root
       return send(200,body,MIME[extname(file)]);
     }catch(e){send(e.status||500,{error:e instanceof AppError?e.message:e.name==='TimeoutError'?'請求逾時，請稍後重試。':'本機處理失敗，請檢查檔案或重新啟動。'});}
   });
-  return {server,store,token,port};
+  server.on('close',()=>{extension.close();if(notebooks!==extension)notebooks.close().catch(()=>{});});
+  return {server,store,token,port,extension};
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const app=makeServer();
