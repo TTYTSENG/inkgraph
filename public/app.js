@@ -20,7 +20,7 @@ const paths = {
 const icon = (name) => `<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[name] || paths.note}"/></svg>`;
 const labels = {dashboard:'研究總覽',inbox:'待整理收件匣',sources:'來源文獻庫',annotations:'摘錄與加註',terms:'字彙辭典',notes:'隨記與寫作',discussions:'討論與訊息',concepts:'概念與主題',discussion:'討論工作區',message:'訊息關聯',concept:'概念工作區',annotation:'摘錄出處',term:'辭典條目',matrix:'文獻比較表',graph:'文獻脈絡',references:'APA 引用清單',exports:'輸出與備份',settings:'設定與說明',source:'閱讀工作區',note:'寫作工作區',search:'搜尋結果'};
 const relationLabels = {supports:'支持',contradicts:'反駁',extends:'延伸',compares:'比較'};
-labels.mobile='手機收件與辨識';
+labels.mobile='手機收件與整理';
 const origins = {local:'本機檔案',gemini:'Gemini',notebooklm:'NotebookLM',manual:'手動建立',demo:'示範資料'};
 let entities=[], view='dashboard', selectedId='', project='', query='', selectedQuote='', selectedPage='', readerMode='text', citations=null, aiAnswer='', aiKey='', aiModel='', noteDraft=null, toastTimer, uploadOrigin='local';
 let sideNoteId='', readingSourceId='', connectionsAll=false, selectedAnnotationId='';

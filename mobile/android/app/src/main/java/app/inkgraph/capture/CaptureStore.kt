@@ -27,6 +27,18 @@ class CaptureStore private constructor(private val ctx: Context): SQLiteOpenHelp
     override fun onCreate(db: SQLiteDatabase) { db.execSQL("CREATE TABLE captures(id TEXT PRIMARY KEY,data TEXT NOT NULL)") }
     override fun onUpgrade(db: SQLiteDatabase, old: Int, next: Int) { error("Unsupported capture database version") }
     val prefs=ctx.getSharedPreferences("capture", Context.MODE_PRIVATE)
+    data class Presentation(val title:String,val phase:String,val state:String,val details:String)
+    fun presentation(row:JSONObject):Presentation {
+        val media=row.getJSONArray("media");var photos=0;var seconds=0L
+        for(i in 0 until media.length()){val item=media.getJSONObject(i);if(item.optString("type")=="audio")seconds+=item.optLong("durationMs")/1000 else photos++}
+        val title=row.optString("text").lineSequence().firstOrNull{it.isNotBlank()}?.trim()?.take(60)
+            ?:when{photos>0&&seconds>0->"照片與語音記錄";photos>0->"照片記錄";seconds>0->"語音記錄";else->"未命名草稿"}
+        val completed=row.optBoolean("completed")
+        val received=completed&&prefs.contains("received:${row.getString("id")}:${row.getInt("revision")}")
+        val phase=when{row.optBoolean("recording")->"recording";!completed->"draft";received->"received";else->"pending"}
+        val state=when(phase){"recording"->"正在錄音";"received"->"此版本已接收";"pending"->"可傳至電腦";else->if(row.optInt("revision",1)>1)"草稿 · 有新版待完成" else "草稿 · 已保存"}
+        return Presentation(title,phase,state,"照片 $photos 張 · 錄音 ${seconds/60}分${seconds%60}秒")
+    }
     val deviceId: String get() { val current=prefs.getString("deviceId",null);if(current!=null)return current;val id=UUID.randomUUID().toString();check(prefs.edit().putString("deviceId",id).commit());return id }
     @Synchronized fun read(id: String): JSONObject? = readableDatabase.rawQuery("SELECT data FROM captures WHERE id=?",arrayOf(id)).use { if(it.moveToFirst())JSONObject(it.getString(0)) else null }
     @Synchronized fun all(): List<JSONObject> = readableDatabase.rawQuery("SELECT data FROM captures ORDER BY rowid DESC",null).use { c -> val rows=mutableListOf<JSONObject>();while(c.moveToNext())rows.add(JSONObject(c.getString(0)));rows }

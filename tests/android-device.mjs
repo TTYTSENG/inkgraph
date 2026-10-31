@@ -1,32 +1,51 @@
-// Operates only the explicitly authorized InkGraph test package.
+// Only this authorized package and explicitly marked synthetic records are changed.
 import assert from 'node:assert/strict';
-import { execFileSync,spawnSync } from 'node:child_process';
-import { writeFileSync,mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
-const adb=process.env.INKGRAPH_ADB;if(!adb)throw Error('Set INKGRAPH_ADB to the authorized platform tool');
+import {execFileSync,spawnSync} from 'node:child_process';
+import {writeFileSync,mkdirSync} from 'node:fs';
+import {resolve} from 'node:path';
+const adb=process.env.INKGRAPH_ADB;if(!adb)throw Error('Set INKGRAPH_ADB');
 const pkg='app.inkgraph.capture.dev',activity=pkg+'/app.inkgraph.capture.MainActivity';
 const run=args=>execFileSync(adb,args,{encoding:'utf8',timeout:20000,windowsHide:true});
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
-function nodes(){run(['shell','uiautomator','dump','/data/local/tmp/inkgraph-capture-test-ui.xml']);const xml=run(['exec-out','cat','/data/local/tmp/inkgraph-capture-test-ui.xml']);const result=[...xml.matchAll(/<node\b([^>]+)>/g)].map(m=>Object.fromEntries([...m[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(a=>[a[1],a[2]])));assert.ok(result.some(n=>n.package===pkg),'Stop: InkGraph is not the visible app; unlock the device and open it');return result.filter(n=>n.package===pkg);}
-function tap(node){const b=node?.bounds?.match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);assert.ok(b,'Visible target bounds missing');const [x1,y1,x2,y2]=b.slice(1).map(Number);assert.ok(x2>x1&&y2>y1);run(['shell','input','tap',String(Math.round((x1+x2)/2)),String(Math.round((y1+y2)/2))]);}
-run(['shell','am','start','-n',activity]);await wait(800);let list=nodes();
-assert.ok(list.some(n=>n.text.includes('新增筆記')));assert.ok(list.some(n=>n.text.startsWith('草稿 ')));assert.ok(list.some(n=>n.text.startsWith('待傳至電腦')));assert.ok(list.some(n=>n.text.startsWith('電腦已接收')));
-mkdirSync(resolve('artifacts'),{recursive:true});const image=spawnSync(adb,['exec-out','screencap','-p'],{timeout:10000,maxBuffer:12*1024*1024});assert.equal(image.status,0);writeFileSync(resolve('artifacts/android-home-status.png'),image.stdout);
-tap(list.find(n=>n.text==='查看全部記錄與傳輸狀態'));await wait(400);list=nodes();
-const item=list.find(n=>n.text.startsWith('電腦已接收 ·')||n.text.startsWith('待傳輸／待回執 ·'));if(item){tap(item);await wait(300);list=nodes();assert.ok(list.some(n=>n.text==='記錄與傳輸狀態'));assert.equal(list.filter(n=>n.class==='android.widget.EditText').length,0);tap(list.find(n=>n.text==='返回首頁'));}
-else tap(list.find(n=>n.text==='關閉'));
-let draftTested=false;
-let deletionTested=false;
-function findScrolled(text){for(let i=0;i<6;i++){const found=nodes().find(n=>n.text===text);if(found)return found;run(['shell','input','swipe','540','1900','540','700','250']);}throw Error('Missing visible control: '+text);}
-if(process.argv.includes('--delete')){
-  await wait(300);list=nodes();const initialDrafts=list.find(n=>n.text.startsWith('草稿 '))?.text;assert.ok(initialDrafts);
-  tap(list.find(n=>n.text.includes('新增筆記')));await wait(400);list=nodes();const editors=list.filter(n=>n.class==='android.widget.EditText');assert.ok(editors.length>=2);tap(editors[editors.length-1]);run(['shell','input','text','IGDELETEONLY20261025']);await wait(1200);run(['shell','input','keyevent','4']);
-  tap(findScrolled('刪除此記錄'));await wait(300);list=nodes();assert.ok(list.some(n=>n.text.includes('尚未確認傳到電腦')));tap(list.find(n=>n.text==='取消'));await wait(200);assert.ok(nodes().some(n=>n.class==='android.widget.EditText'&&n.text.includes('IGDELETEONLY20261025')));
-  tap(findScrolled('刪除此記錄'));await wait(200);tap(nodes().find(n=>n.text==='確認刪除'));await wait(1000);list=nodes();assert.ok(list.some(n=>n.text===initialDrafts));
-  run(['shell','am','force-stop',pkg]);run(['shell','am','start','-n',activity]);await wait(500);assert.ok(nodes().some(n=>n.text===initialDrafts));deletionTested=true;
+const size=run(['shell','wm','size']).match(/(?:Override|Physical) size: (\d+)x(\d+)/g)?.at(-1)?.match(/(\d+)x(\d+)/);
+const width=Number(size?.[1]||1080),height=Number(size?.[2]||2400);
+function nodes(){
+  run(['shell','uiautomator','dump','/data/local/tmp/inkgraph-capture-test-ui.xml']);
+  const xml=run(['exec-out','cat','/data/local/tmp/inkgraph-capture-test-ui.xml']);
+  const result=[...xml.matchAll(/<node\b([^>]+)>/g)].map(m=>Object.fromEntries([...m[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(a=>[a[1],a[2]])));
+  assert.ok(result.some(n=>n.package===pkg),'Stop: unlock and open InkGraph');return result.filter(n=>n.package===pkg);
 }
-if(process.argv.includes('--draft')){
-  await wait(300);list=nodes();tap(list.find(n=>n.text.includes('新增筆記')));await wait(400);list=nodes();const editors=list.filter(n=>n.class==='android.widget.EditText');assert.ok(editors.length>=2);tap(editors[editors.length-1]);run(['shell','input','text','IGDRAFTCHECK20261025']);await wait(1500);
-  run(['shell','am','force-stop',pkg]);run(['shell','am','start','-n',activity]);await wait(500);list=nodes();tap(list.find(n=>n.text.startsWith('草稿 ')));await wait(250);list=nodes();assert.ok(list.some(n=>n.text.includes('IGDRAFTCHECK20261025')));tap(list.find(n=>n.text==='關閉'));draftTested=true;
+function bounds(node){const b=node?.bounds?.match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);assert.ok(b,'Missing visible target');return b.slice(1).map(Number);}
+function tap(node){const [x1,y1,x2,y2]=bounds(node);assert.ok(x2>x1&&y2>y1);run(['shell','input','tap',String(Math.round((x1+x2)/2)),String(Math.round((y1+y2)/2))]);}
+function find(predicate){for(let i=0;i<9;i++){const n=nodes().find(predicate);if(n)return n;run(['shell','input','swipe',String(width/2),String(Math.round(height*.7)),String(width/2),String(Math.round(height*.3)),'250']);}return null;}
+function capture(name){mkdirSync(resolve('artifacts'),{recursive:true});const r=spawnSync(adb,['exec-out','screencap','-p'],{timeout:10000,maxBuffer:15*1024*1024});assert.equal(r.status,0);writeFileSync(resolve('artifacts',name),r.stdout);}
+function footer(list){for(const text of ['錄音','照片','完成記錄']){const n=list.find(n=>n.text===text);assert.ok(n,'Fixed footer missing: '+text);const [x1,y1,x2,y2]=bounds(n);assert.ok(x1>=0&&x2<=width&&y1>0&&y2<height,'Footer outside viewport: '+text);}}
+function total(list){return list.find(n=>/^全部 \d+$/.test(n.text))?.text;}
+async function removeCurrent(){tap(nodes().find(n=>n.text==='更多'));await wait(150);tap(nodes().find(n=>n.text==='刪除此記錄'));await wait(150);tap(nodes().find(n=>n.text==='確認刪除'));await wait(600);}
+
+run(['shell','am','start','-n',activity]);await wait(500);let list=nodes();
+assert.ok(!list.some(n=>n.text==='停止並保存'),'Stop: a real recording is active');
+if(!list.some(n=>n.text==='新增筆記')){tap(list.find(n=>n.text==='返回'));list=nodes();}
+assert.ok(list.some(n=>n.text==='新增筆記'));assert.ok(total(list));assert.ok(list.some(n=>/^草稿 \d+$/.test(n.text)));
+const received=list.some(n=>/^已接收 [1-9]\d*$/.test(n.text))?find(n=>n.class==='android.widget.Button'&&n.text.includes('此版本已接收')):null;
+let completedReadOnly=false;if(received){tap(received);list=nodes();assert.equal(list.filter(n=>n.class==='android.widget.EditText').length,0);assert.ok(list.some(n=>n.text==='編輯記錄'));completedReadOnly=true;tap(list.find(n=>n.text==='返回'));}
+list=nodes();capture('android-home-status.png');
+let experience=false,deletion=false,longList=false;
+if(process.argv.includes('--experience')||process.argv.includes('--delete')){
+  const initialTotal=total(list);tap(list.find(n=>n.text==='新增筆記'));await wait(300);list=nodes();
+  const edit=list.filter(n=>n.class==='android.widget.EditText').at(-1);assert.ok(edit);tap(edit);run(['shell','input','text','IGEXPERIENCE20261031']);await wait(1200);list=nodes();
+  assert.ok(list.some(n=>n.class==='android.widget.EditText'&&n.text==='IGEXPERIENCE20261031'));footer(list);capture('android-experience-keyboard.png');
+  tap(list.find(n=>n.text==='返回'));list=nodes();assert.ok(total(list));
+  const saved=find(n=>n['content-desc']==='開啟記錄：IGEXPERIENCE20261031');assert.ok(saved,'Saved draft must appear directly on home');tap(saved);
+  assert.ok(nodes().some(n=>n.class==='android.widget.EditText'&&n.text==='IGEXPERIENCE20261031'));
+  tap(nodes().find(n=>n.text==='更多'));tap(nodes().find(n=>n.text==='刪除此記錄'));list=nodes();assert.ok(list.some(n=>n.text.includes('尚未確認傳到電腦')));tap(list.find(n=>n.text==='取消'));
+  assert.ok(nodes().some(n=>n.class==='android.widget.EditText'&&n.text==='IGEXPERIENCE20261031'));
+  tap(nodes().find(n=>n.text==='返回'));run(['shell','am','force-stop',pkg]);run(['shell','am','start','-n',activity]);await wait(400);
+  const restored=find(n=>n['content-desc']==='開啟記錄：IGEXPERIENCE20261031');assert.ok(restored,'Draft must survive process restart');tap(restored);await removeCurrent();assert.equal(total(nodes()),initialTotal);experience=true;deletion=true;
 }
-console.log(JSON.stringify({visibleHomeEntries:true,completedRecordReadOnly:true,draftSurvivesProcessRestart:draftTested?'passed':'not-run',syntheticDeletionAndCancel:deletionTested?'passed':'not-run',screenshot:'artifacts/android-home-status.png'}));
+if(process.argv.includes('--layout')){
+  const item=find(n=>n['content-desc']==='開啟記錄：IGLAYOUT20261031');assert.ok(item,'Run the synthetic long-list fixture preparation first');tap(item);list=nodes();footer(list);
+  tap(list.filter(n=>n.class==='android.widget.EditText').at(-1));await wait(200);list=nodes();footer(list);capture('android-experience-long-list.png');
+  await removeCurrent();longList=true;
+}
+console.log(JSON.stringify({directRecordList:true,completedRecordReadOnly:completedReadOnly,syntheticDraftReopenAndRestart:experience,syntheticDeletionAndCancel:deletion,longListFixedFooter:longList,screenshot:'artifacts/android-home-status.png'}));
